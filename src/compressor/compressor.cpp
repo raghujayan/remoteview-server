@@ -1,52 +1,100 @@
+/**
+ * RemoteView Compression with Standard Frame Formats
+ * 
+ * This implementation uses proper frame formats for LZ4 and Zstd compression:
+ * 
+ * LZ4 Frame Format (LZ4F):
+ * - Magic number: 0x184D2204
+ * - Self-describing headers with content size and checksum flags
+ * - Standard format decodable by any LZ4 tool (e.g., lz4 command line)
+ * - Content integrity verification with checksums
+ * - Better error detection and recovery
+ * 
+ * Zstd Frame Format:
+ * - Magic number: 0xFD2FB528
+ * - Standard Zstd frame format decodable by any zstd tool
+ * - Built-in content size and integrity verification
+ * - Better error detection than raw blocks
+ * 
+ * Benefits over raw blocks:
+ * - Tiles can be saved to disk and decoded offline with standard tools
+ * - Better error detection and debugging capabilities
+ * - Standard format ensures interoperability
+ * - Content size and integrity verification built-in
+ * - Proper handling of edge cases and malformed data
+ */
+
 #include "compressor.hpp"
 #include <spdlog/spdlog.h>
 #include <lz4.h>
 #include <lz4hc.h>
+#include <lz4frame.h>  // LZ4 frame format API
 #include <zstd.h>
 #include <chrono>
 
 namespace remoteview {
 
-// LZ4 Compressor implementation
+// LZ4 Compressor implementation with frame format
 LZ4Compressor::LZ4Compressor(int compression_level) 
-    : compression_level_(compression_level) {
-    spdlog::debug("LZ4 compressor initialized with level {}", compression_level_);
+    : compression_level_(compression_level), compression_ctx_(nullptr), decompression_ctx_(nullptr) {
+    // Initialize LZ4F compression context
+    LZ4F_errorCode_t result = LZ4F_createCompressionContext(
+        reinterpret_cast<LZ4F_cctx**>(&compression_ctx_), LZ4F_VERSION);
+    if (LZ4F_isError(result)) {
+        spdlog::error("Failed to create LZ4F compression context: {}", LZ4F_getErrorName(result));
+        compression_ctx_ = nullptr;
+    }
+    
+    // Initialize LZ4F decompression context  
+    result = LZ4F_createDecompressionContext(
+        reinterpret_cast<LZ4F_dctx**>(&decompression_ctx_), LZ4F_VERSION);
+    if (LZ4F_isError(result)) {
+        spdlog::error("Failed to create LZ4F decompression context: {}", LZ4F_getErrorName(result));
+        decompression_ctx_ = nullptr;
+    }
+    
+    spdlog::debug("LZ4Frame compressor initialized with level {} (frame format)", compression_level_);
+}
+
+LZ4Compressor::~LZ4Compressor() {
+    if (compression_ctx_) {
+        LZ4F_freeCompressionContext(reinterpret_cast<LZ4F_cctx*>(compression_ctx_));
+    }
+    if (decompression_ctx_) {
+        LZ4F_freeDecompressionContext(reinterpret_cast<LZ4F_dctx*>(decompression_ctx_));
+    }
 }
 
 std::vector<uint8_t> LZ4Compressor::compress(const uint8_t* data, size_t size) {
     auto start_time = std::chrono::high_resolution_clock::now();
     
-    // Calculate maximum compressed size
-    int max_compressed_size = LZ4_compressBound(static_cast<int>(size));
-    if (max_compressed_size <= 0) {
-        spdlog::error("LZ4_compressBound failed for size {}", size);
+    if (!compression_ctx_) {
+        spdlog::error("LZ4F compression context not initialized");
         return std::vector<uint8_t>(data, data + size); // Return uncompressed
     }
     
-    std::vector<uint8_t> compressed(max_compressed_size);
+    // Configure LZ4F preferences for tile compression
+    LZ4F_preferences_t preferences = {};
+    preferences.frameInfo.contentSize = size;
+    preferences.frameInfo.blockSizeID = LZ4F_max64KB;  // Good for tile sizes
+    preferences.frameInfo.contentChecksumFlag = LZ4F_contentChecksumEnabled; // Integrity check
+    preferences.compressionLevel = compression_level_;
     
-    int compressed_size;
-    if (compression_level_ <= 1) {
-        // Fast compression
-        compressed_size = LZ4_compress_default(
-            reinterpret_cast<const char*>(data),
-            reinterpret_cast<char*>(compressed.data()),
-            static_cast<int>(size),
-            max_compressed_size
-        );
-    } else {
-        // High compression
-        compressed_size = LZ4_compress_HC(
-            reinterpret_cast<const char*>(data),
-            reinterpret_cast<char*>(compressed.data()),
-            static_cast<int>(size),
-            max_compressed_size,
-            compression_level_
-        );
-    }
+    // Calculate maximum frame size (header + content + footer)
+    size_t max_frame_size = LZ4F_compressFrameBound(size, &preferences);
+    std::vector<uint8_t> compressed(max_frame_size);
     
-    if (compressed_size <= 0) {
-        spdlog::error("LZ4 compression failed");
+    // Compress entire frame in one shot (simpler and sufficient for tiles)
+    size_t compressed_size = LZ4F_compressFrame(
+        compressed.data(),
+        max_frame_size,
+        data,
+        size,
+        &preferences
+    );
+    
+    if (LZ4F_isError(compressed_size)) {
+        spdlog::error("LZ4F frame compression failed: {}", LZ4F_getErrorName(compressed_size));
         return std::vector<uint8_t>(data, data + size); // Return uncompressed
     }
     
@@ -64,7 +112,7 @@ std::vector<uint8_t> LZ4Compressor::compress(const uint8_t* data, size_t size) {
         stats_.total_compress_time_ms += duration.count() / 1000.0;
     }
     
-    spdlog::debug("LZ4 compressed {} -> {} bytes ({:.1f}%)", 
+    spdlog::debug("LZ4Frame compressed {} -> {} bytes ({:.1f}%)", 
                   size, compressed_size, (compressed_size * 100.0) / size);
     
     return compressed;
@@ -73,18 +121,34 @@ std::vector<uint8_t> LZ4Compressor::compress(const uint8_t* data, size_t size) {
 std::vector<uint8_t> LZ4Compressor::decompress(const uint8_t* data, size_t compressed_size, size_t uncompressed_size) {
     auto start_time = std::chrono::high_resolution_clock::now();
     
-    std::vector<uint8_t> decompressed(uncompressed_size);
+    if (!decompression_ctx_) {
+        spdlog::error("LZ4F decompression context not initialized");
+        return std::vector<uint8_t>(data, data + compressed_size); // Return compressed data as fallback
+    }
     
-    int result = LZ4_decompress_safe(
-        reinterpret_cast<const char*>(data),
-        reinterpret_cast<char*>(decompressed.data()),
-        static_cast<int>(compressed_size),
-        static_cast<int>(uncompressed_size)
+    // Reset decompression context for new frame
+    LZ4F_resetDecompressionContext(reinterpret_cast<LZ4F_dctx*>(decompression_ctx_));
+    
+    std::vector<uint8_t> decompressed(uncompressed_size);
+    size_t src_size = compressed_size;
+    size_t dst_size = uncompressed_size;
+    
+    // Decompress entire frame in one shot
+    LZ4F_errorCode_t result = LZ4F_decompress(
+        reinterpret_cast<LZ4F_dctx*>(decompression_ctx_),
+        decompressed.data(), &dst_size,
+        data, &src_size,
+        nullptr  // No decompression options
     );
     
-    if (result < 0) {
-        spdlog::error("LZ4 decompression failed");
+    if (LZ4F_isError(result)) {
+        spdlog::error("LZ4F frame decompression failed: {}", LZ4F_getErrorName(result));
         return std::vector<uint8_t>(data, data + compressed_size); // Return compressed data as fallback
+    }
+    
+    // Verify frame was completely consumed
+    if (src_size != compressed_size) {
+        spdlog::warn("LZ4F frame not completely consumed: {} of {} bytes", src_size, compressed_size);
     }
     
     // Update statistics
@@ -97,9 +161,9 @@ std::vector<uint8_t> LZ4Compressor::decompress(const uint8_t* data, size_t compr
         stats_.total_decompress_time_ms += duration.count() / 1000.0;
     }
     
-    spdlog::debug("LZ4 decompressed {} -> {} bytes", compressed_size, result);
+    spdlog::debug("LZ4Frame decompressed {} -> {} bytes", compressed_size, dst_size);
     
-    decompressed.resize(result);
+    decompressed.resize(dst_size);
     return decompressed;
 }
 
@@ -125,19 +189,47 @@ void LZ4Compressor::reset_stats() {
     stats_ = Stats{};
 }
 
-// Zstd Compressor implementation
+// Zstd Compressor implementation with frame format
 ZstdCompressor::ZstdCompressor(int compression_level) 
-    : compression_level_(compression_level) {
-    spdlog::debug("Zstd compressor initialized with level {}", compression_level_);
+    : compression_level_(compression_level), compression_ctx_(nullptr), decompression_ctx_(nullptr) {
+    // Create Zstd compression context for reuse
+    compression_ctx_ = ZSTD_createCCtx();
+    if (!compression_ctx_) {
+        spdlog::error("Failed to create Zstd compression context");
+    }
+    
+    // Create Zstd decompression context for reuse  
+    decompression_ctx_ = ZSTD_createDCtx();
+    if (!decompression_ctx_) {
+        spdlog::error("Failed to create Zstd decompression context");
+    }
+    
+    spdlog::debug("ZstdFrame compressor initialized with level {} (frame format)", compression_level_);
+}
+
+ZstdCompressor::~ZstdCompressor() {
+    if (compression_ctx_) {
+        ZSTD_freeCCtx(static_cast<ZSTD_CCtx*>(compression_ctx_));
+    }
+    if (decompression_ctx_) {
+        ZSTD_freeDCtx(static_cast<ZSTD_DCtx*>(decompression_ctx_));
+    }
 }
 
 std::vector<uint8_t> ZstdCompressor::compress(const uint8_t* data, size_t size) {
     auto start_time = std::chrono::high_resolution_clock::now();
     
+    if (!compression_ctx_) {
+        spdlog::error("Zstd compression context not initialized");
+        return std::vector<uint8_t>(data, data + size); // Return uncompressed
+    }
+    
     size_t max_compressed_size = ZSTD_compressBound(size);
     std::vector<uint8_t> compressed(max_compressed_size);
     
-    size_t compressed_size = ZSTD_compress(
+    // Use context-based compression with frame format (standard Zstd format)
+    size_t compressed_size = ZSTD_compressCCtx(
+        static_cast<ZSTD_CCtx*>(compression_ctx_),
         compressed.data(),
         max_compressed_size,
         data,
@@ -146,7 +238,7 @@ std::vector<uint8_t> ZstdCompressor::compress(const uint8_t* data, size_t size) 
     );
     
     if (ZSTD_isError(compressed_size)) {
-        spdlog::error("Zstd compression failed: {}", ZSTD_getErrorName(compressed_size));
+        spdlog::error("ZstdFrame compression failed: {}", ZSTD_getErrorName(compressed_size));
         return std::vector<uint8_t>(data, data + size); // Return uncompressed
     }
     
@@ -164,7 +256,7 @@ std::vector<uint8_t> ZstdCompressor::compress(const uint8_t* data, size_t size) 
         stats_.total_compress_time_ms += duration.count() / 1000.0;
     }
     
-    spdlog::debug("Zstd compressed {} -> {} bytes ({:.1f}%)", 
+    spdlog::debug("ZstdFrame compressed {} -> {} bytes ({:.1f}%)", 
                   size, compressed_size, (compressed_size * 100.0) / size);
     
     return compressed;
@@ -173,9 +265,16 @@ std::vector<uint8_t> ZstdCompressor::compress(const uint8_t* data, size_t size) 
 std::vector<uint8_t> ZstdCompressor::decompress(const uint8_t* data, size_t compressed_size, size_t uncompressed_size) {
     auto start_time = std::chrono::high_resolution_clock::now();
     
+    if (!decompression_ctx_) {
+        spdlog::error("Zstd decompression context not initialized");
+        return std::vector<uint8_t>(data, data + compressed_size); // Return compressed data as fallback
+    }
+    
     std::vector<uint8_t> decompressed(uncompressed_size);
     
-    size_t result = ZSTD_decompress(
+    // Use context-based decompression (handles standard Zstd frame format)
+    size_t result = ZSTD_decompressDCtx(
+        static_cast<ZSTD_DCtx*>(decompression_ctx_),
         decompressed.data(),
         uncompressed_size,
         data,
@@ -183,7 +282,7 @@ std::vector<uint8_t> ZstdCompressor::decompress(const uint8_t* data, size_t comp
     );
     
     if (ZSTD_isError(result)) {
-        spdlog::error("Zstd decompression failed: {}", ZSTD_getErrorName(result));
+        spdlog::error("ZstdFrame decompression failed: {}", ZSTD_getErrorName(result));
         return std::vector<uint8_t>(data, data + compressed_size); // Return compressed data as fallback
     }
     
@@ -197,7 +296,7 @@ std::vector<uint8_t> ZstdCompressor::decompress(const uint8_t* data, size_t comp
         stats_.total_decompress_time_ms += duration.count() / 1000.0;
     }
     
-    spdlog::debug("Zstd decompressed {} -> {} bytes", compressed_size, result);
+    spdlog::debug("ZstdFrame decompressed {} -> {} bytes", compressed_size, result);
     
     decompressed.resize(result);
     return decompressed;

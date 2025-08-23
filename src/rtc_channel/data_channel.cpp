@@ -50,6 +50,16 @@ std::unique_ptr<protocol::TileMessage> PlaneQueue::dequeue() {
     return tile;
 }
 
+PlaneQueue::QueueStats PlaneQueue::get_stats() const {
+    QueueStats stats;
+    stats.enqueued = enqueued_.load();
+    stats.dropped = dropped_.load(); 
+    stats.sent = sent_.load();
+    stats.current_depth = current_depth_.load();
+    stats.max_depth_seen = max_depth_seen_.load();
+    return stats;
+}
+
 void PlaneQueue::clear() {
     std::lock_guard<std::mutex> lock(queue_mutex_);
     

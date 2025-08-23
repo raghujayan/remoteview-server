@@ -26,7 +26,7 @@ TEST_F(ProtocolTest, TileMessageConstruction) {
                    DataType::U8, CompressionType::LZ4, test_payload_);
     
     const auto& header = msg.header();
-    EXPECT_EQ(header.msg_type, 0x01);
+    EXPECT_EQ(header.protocol_version, 0x01);
     EXPECT_EQ(header.plane, static_cast<uint8_t>(PlaneType::Inline));
     EXPECT_EQ(header.slice_index, 100);
     EXPECT_EQ(header.tile_x, 256);
@@ -57,7 +57,7 @@ TEST_F(ProtocolTest, TileMessageSerialization) {
     // Compare headers
     const auto& orig_header = msg.header();
     const auto& deser_header = deserialized->header();
-    EXPECT_EQ(orig_header.msg_type, deser_header.msg_type);
+    EXPECT_EQ(orig_header.protocol_version, deser_header.protocol_version);
     EXPECT_EQ(orig_header.plane, deser_header.plane);
     EXPECT_EQ(orig_header.slice_index, deser_header.slice_index);
     EXPECT_EQ(orig_header.tile_x, deser_header.tile_x);

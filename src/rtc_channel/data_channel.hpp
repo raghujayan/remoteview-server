@@ -76,15 +76,7 @@ public:
      * Get current queue statistics (thread-safe snapshot)
      * @return Current statistics
      */
-    QueueStats get_stats() const {
-        QueueStats stats;
-        stats.enqueued = enqueued_.load();
-        stats.dropped = dropped_.load(); 
-        stats.sent = sent_.load();
-        stats.current_depth = current_depth_.load();
-        stats.max_depth_seen = max_depth_seen_.load();
-        return stats;
-    }
+    QueueStats get_stats() const;
     
     /**
      * Clear all queued tiles (used on slice changes)
@@ -207,7 +199,7 @@ public:
     }
     
     bool is_channel_ready() const {
-        std::lock_guard<std::mutex> lock(state_mutex_);
+        std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(state_mutex_));
         return channel_ready_;
     }
 };

@@ -90,17 +90,18 @@ public:
     virtual void reset_stats() = 0;
 };
 
-// LZ4 Compressor - default, fast compression
+// LZ4 Compressor - default, fast compression with proper frame format
 class LZ4Compressor : public Compressor {
 public:
     explicit LZ4Compressor(int compression_level = 1);
+    ~LZ4Compressor();
     
     std::vector<uint8_t> compress(const uint8_t* data, size_t size) override;
     std::vector<uint8_t> decompress(const uint8_t* data, size_t compressed_size,
                                    size_t uncompressed_size) override;
     
     float estimate_ratio(const uint8_t* data, size_t size) override;
-    const char* name() const override { return "LZ4"; }
+    const char* name() const override { return "LZ4Frame"; }
     protocol::CompressionType type() const override { return protocol::CompressionType::LZ4; }
     
     Stats get_stats() const override;
@@ -110,19 +111,24 @@ private:
     int compression_level_;
     mutable Stats stats_;
     mutable std::mutex stats_mutex_;
+    
+    // LZ4 frame context for reuse (performance optimization)
+    void* compression_ctx_;
+    void* decompression_ctx_;
 };
 
-// Zstd Compressor - high compression for WAN/congested networks
+// Zstd Compressor - high compression with standard frame format
 class ZstdCompressor : public Compressor {
 public:
     explicit ZstdCompressor(int compression_level = 1);
+    ~ZstdCompressor();
     
     std::vector<uint8_t> compress(const uint8_t* data, size_t size) override;
     std::vector<uint8_t> decompress(const uint8_t* data, size_t compressed_size,
                                    size_t uncompressed_size) override;
     
     float estimate_ratio(const uint8_t* data, size_t size) override;
-    const char* name() const override { return "Zstd"; }
+    const char* name() const override { return "ZstdFrame"; }
     protocol::CompressionType type() const override { return protocol::CompressionType::Zstd; }
     
     Stats get_stats() const override;
@@ -132,6 +138,10 @@ private:
     int compression_level_;
     mutable Stats stats_;
     mutable std::mutex stats_mutex_;
+    
+    // Zstd context for reuse (performance optimization)
+    void* compression_ctx_;
+    void* decompression_ctx_;
 };
 
 // No compression - passthrough
