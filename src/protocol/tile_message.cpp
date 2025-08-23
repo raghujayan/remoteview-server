@@ -126,7 +126,7 @@ bool TileMessage::is_valid() const {
         // Minimum reasonable compression - allow very high compression ratios
         // (at least 1 byte per 1024 pixels to allow for very redundant data)
         size_t min_compressed_size = std::max(static_cast<size_t>(1), 
-                                             (header_.tile_w * header_.tile_h + 1023) / 1024);
+                                             static_cast<size_t>((header_.tile_w * header_.tile_h + 1023) / 1024));
         if (payload_.size() < min_compressed_size && payload_.size() > 0) {
             spdlog::warn("Compressed tile suspiciously small: size={}, min_expected={}", 
                         payload_.size(), min_compressed_size);
