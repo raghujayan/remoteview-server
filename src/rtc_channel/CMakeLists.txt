@@ -2,6 +2,7 @@
 
 add_library(remoteview_rtc_channel
     webrtc_server.cpp
+    data_channel.cpp
 )
 
 target_link_libraries(remoteview_rtc_channel

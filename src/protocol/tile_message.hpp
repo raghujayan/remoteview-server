@@ -24,23 +24,55 @@ namespace remoteview::protocol {
  * as it minimizes bandwidth and parsing overhead.
  */
 
-// Binary tile message header - exactly 24 bytes as per specification
-// Uses packed structure to ensure consistent byte layout across platforms
+/**
+ * Binary tile message header - exactly 24 bytes with strict protocol validation
+ * 
+ * PROTOCOL VERSION: 0x01
+ * ENDIANNESS: Little-endian (x86/ARM standard)
+ * MAX_FRAME_SIZE: 16MB (prevents memory exhaustion attacks)
+ * 
+ * Version enforcement ensures client/server compatibility.
+ * Endianness validation prevents corruption on big-endian systems.
+ * Frame size limits prevent DoS attacks via oversized allocations.
+ */
 #pragma pack(push, 1)
 struct TileHeader {
-    uint8_t msg_type = 0x01;    // Message type identifier (0x01 = tile data)
-    uint8_t plane;              // Orthogonal plane: 0=inline, 1=crossline, 2=time/depth
-    uint16_t tile_w;            // Tile width in pixels (typically 256)
-    uint16_t tile_h;            // Tile height in pixels (typically 256)
-    uint32_t tile_x;            // X origin in slice pixel coordinates
-    uint32_t tile_y;            // Y origin in slice pixel coordinates  
-    uint32_t slice_index;       // Slice number within the plane (e.g. inline 1000)
-    uint8_t dtype;              // Data type: 0=u8, 1=u16, 2=f32, 3=mu-law-u8
-    uint8_t compression;        // Compression: 0=none, 1=LZ4, 2=Zstd
-    uint32_t payload_bytes;     // Size of compressed payload that follows
+    uint8_t protocol_version = 0x01;  // RESERVED: Protocol version (0x01), reject unknown versions
+    uint8_t plane;                    // Orthogonal plane: 0=inline, 1=crossline, 2=time/depth
+    uint16_t tile_w;                  // Tile width in pixels (typically 256) - LITTLE ENDIAN
+    uint16_t tile_h;                  // Tile height in pixels (typically 256) - LITTLE ENDIAN  
+    uint32_t tile_x;                  // X origin in slice pixel coordinates - LITTLE ENDIAN
+    uint32_t tile_y;                  // Y origin in slice pixel coordinates - LITTLE ENDIAN
+    uint32_t slice_index;             // Slice number within the plane - LITTLE ENDIAN
+    uint8_t dtype;                    // Data type: 0=u8, 1=u16, 2=f32, 3=mu-law-u8
+    uint8_t compression;              // Compression: 0=none, 1=LZ4, 2=Zstd  
+    uint32_t payload_bytes;           // Size of compressed payload - LITTLE ENDIAN
     
-    // Compile-time size verification - critical for wire protocol compatibility
-    static constexpr size_t SIZE = 24; 
+    // Protocol constants for validation
+    static constexpr uint8_t CURRENT_VERSION = 0x01;
+    static constexpr size_t SIZE = 24;
+    static constexpr size_t MAX_FRAME_SIZE = 16 * 1024 * 1024; // 16MB limit
+    
+    /**
+     * Validate protocol version and frame size
+     * @return true if header is valid and safe to process
+     */
+    bool is_valid() const {
+        return protocol_version == CURRENT_VERSION && 
+               payload_bytes <= MAX_FRAME_SIZE &&
+               tile_w > 0 && tile_h > 0 &&
+               plane <= 2 && dtype <= 3 && compression <= 2;
+    }
+    
+    /**
+     * Validate endianness by checking a magic number
+     * Call this once during connection setup
+     */
+    static bool validate_endianness() {
+        uint32_t magic = 0x12345678;
+        uint8_t* bytes = reinterpret_cast<uint8_t*>(&magic);
+        return bytes[0] == 0x78; // Little-endian: LSB first
+    }
 };
 #pragma pack(pop)
 

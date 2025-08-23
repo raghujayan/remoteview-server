@@ -10,7 +10,7 @@ TileMessage::TileMessage(PlaneType plane, uint32_t slice_idx,
                         DataType dtype, CompressionType compression,
                         std::vector<uint8_t> payload) {
     
-    header_.msg_type = 0x01;
+    header_.protocol_version = TileHeader::CURRENT_VERSION;
     header_.plane = static_cast<uint8_t>(plane);
     header_.tile_w = tile_w;
     header_.tile_h = tile_h;
@@ -42,6 +42,7 @@ std::vector<uint8_t> TileMessage::serialize() const {
 }
 
 std::unique_ptr<TileMessage> TileMessage::deserialize(const uint8_t* data, size_t size) {
+    // Basic size validation
     if (size < TileHeader::SIZE) {
         spdlog::error("TileMessage data too small for header: {} bytes", size);
         return nullptr;
@@ -49,23 +50,40 @@ std::unique_ptr<TileMessage> TileMessage::deserialize(const uint8_t* data, size_
     
     auto message = std::make_unique<TileMessage>();
     
-    // Copy header
+    // Copy header with strict alignment
     memcpy(&message->header_, data, TileHeader::SIZE);
     
-    // Validate header
-    if (message->header_.msg_type != 0x01) {
-        spdlog::error("Invalid tile message type: {}", message->header_.msg_type);
+    // CRITICAL: Validate protocol version and frame size BEFORE allocation
+    if (!message->header_.is_valid()) {
+        spdlog::error("Invalid tile header: version=0x{:02x}, payload_bytes={}, plane={}, dtype={}", 
+                     message->header_.protocol_version, 
+                     message->header_.payload_bytes,
+                     message->header_.plane,
+                     message->header_.dtype);
         return nullptr;
     }
     
-    // Check payload size
-    if (size < TileHeader::SIZE + message->header_.payload_bytes) {
-        spdlog::error("Insufficient data for payload: {} < {}", 
-                     size, TileHeader::SIZE + message->header_.payload_bytes);
+    // Validate endianness on first connection (static check)
+    static bool endian_checked = false;
+    if (!endian_checked) {
+        if (!TileHeader::validate_endianness()) {
+            spdlog::error("System endianness mismatch - protocol requires little-endian");
+            return nullptr;
+        }
+        endian_checked = true;
+        spdlog::info("Protocol endianness validated: little-endian OK");
+    }
+    
+    // Validate total message size with overflow protection
+    const size_t required_size = TileHeader::SIZE + message->header_.payload_bytes;
+    if (required_size < TileHeader::SIZE || // Overflow check
+        size < required_size) {             // Underflow check
+        spdlog::error("Invalid message size: have={}, need={}, payload={}", 
+                     size, required_size, message->header_.payload_bytes);
         return nullptr;
     }
     
-    // Copy payload
+    // Safe payload allocation (size already validated)
     message->payload_.resize(message->header_.payload_bytes);
     if (message->header_.payload_bytes > 0) {
         memcpy(message->payload_.data(), data + TileHeader::SIZE, message->header_.payload_bytes);
@@ -75,7 +93,7 @@ std::unique_ptr<TileMessage> TileMessage::deserialize(const uint8_t* data, size_
 }
 
 bool TileMessage::is_valid() const {
-    return header_.msg_type == 0x01 && 
+    return header_.is_valid() && 
            header_.payload_bytes == payload_.size();
 }
 
