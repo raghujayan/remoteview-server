@@ -160,3 +160,111 @@ TEST_F(ProtocolTest, TileDataCompression) {
     EXPECT_NE(none_msg, nullptr);
     EXPECT_EQ(none_msg->header().compression, static_cast<uint8_t>(CompressionType::None));
 }
+
+TEST_F(ProtocolTest, TileValidationBounds) {
+    // Test tile request validation
+    EXPECT_TRUE(TileMessage::validate_tile_request(PlaneType::Inline, 100, 0, 0, 256, 256));
+    
+    // Invalid plane type
+    EXPECT_FALSE(TileMessage::validate_tile_request(static_cast<PlaneType>(99), 100, 0, 0, 256, 256));
+    
+    // Slice index too large
+    EXPECT_FALSE(TileMessage::validate_tile_request(PlaneType::Inline, 200000, 0, 0, 256, 256));
+    
+    // Coordinates too large  
+    EXPECT_FALSE(TileMessage::validate_tile_request(PlaneType::Inline, 100, 2000000, 0, 256, 256));
+    EXPECT_FALSE(TileMessage::validate_tile_request(PlaneType::Inline, 100, 0, 2000000, 256, 256));
+    
+    // Zero dimensions
+    EXPECT_FALSE(TileMessage::validate_tile_request(PlaneType::Inline, 100, 0, 0, 0, 256));
+    EXPECT_FALSE(TileMessage::validate_tile_request(PlaneType::Inline, 100, 0, 0, 256, 0));
+    
+    // Dimensions too large
+    EXPECT_FALSE(TileMessage::validate_tile_request(PlaneType::Inline, 100, 0, 0, 4096, 256));
+    EXPECT_FALSE(TileMessage::validate_tile_request(PlaneType::Inline, 100, 0, 0, 256, 4096));
+    
+    // Too many pixels (2K x 2K + 1 should fail)
+    EXPECT_FALSE(TileMessage::validate_tile_request(PlaneType::Inline, 100, 0, 0, 2049, 2049));
+}
+
+TEST_F(ProtocolTest, TileHeaderValidation) {
+    TileHeader header;
+    header.protocol_version = TileHeader::CURRENT_VERSION;
+    header.plane = static_cast<uint8_t>(PlaneType::Inline);
+    header.slice_index = 100;
+    header.tile_x = 256;
+    header.tile_y = 512;
+    header.tile_w = 128;
+    header.tile_h = 128;
+    header.dtype = static_cast<uint8_t>(DataType::U8);
+    header.compression = static_cast<uint8_t>(CompressionType::LZ4);
+    header.payload_bytes = 1024;
+    
+    // Valid header
+    EXPECT_TRUE(header.is_valid());
+    
+    // Invalid protocol version
+    header.protocol_version = 0x99;
+    EXPECT_FALSE(header.is_valid());
+    header.protocol_version = TileHeader::CURRENT_VERSION;
+    
+    // Invalid plane
+    header.plane = 99;
+    EXPECT_FALSE(header.is_valid());
+    header.plane = static_cast<uint8_t>(PlaneType::Inline);
+    
+    // Invalid data type
+    header.dtype = 99;
+    EXPECT_FALSE(header.is_valid());
+    header.dtype = static_cast<uint8_t>(DataType::U8);
+    
+    // Invalid compression
+    header.compression = 99;
+    EXPECT_FALSE(header.is_valid());
+    header.compression = static_cast<uint8_t>(CompressionType::LZ4);
+    
+    // Zero dimensions
+    header.tile_w = 0;
+    EXPECT_FALSE(header.is_valid());
+    header.tile_w = 128;
+    
+    header.tile_h = 0;
+    EXPECT_FALSE(header.is_valid());
+    header.tile_h = 128;
+    
+    // Dimensions too large
+    header.tile_w = 4096;
+    EXPECT_FALSE(header.is_valid());
+    header.tile_w = 128;
+    
+    // Coordinates too large
+    header.tile_x = 2000000;
+    EXPECT_FALSE(header.is_valid());
+    header.tile_x = 256;
+    
+    // Slice index too large
+    header.slice_index = 200000;
+    EXPECT_FALSE(header.is_valid());
+    header.slice_index = 100;
+    
+    // Payload too large
+    header.payload_bytes = 20 * 1024 * 1024; // 20MB
+    EXPECT_FALSE(header.is_valid());
+    header.payload_bytes = 1024;
+    
+    // Should be valid again
+    EXPECT_TRUE(header.is_valid());
+}
+
+TEST_F(ProtocolTest, FormatValidation) {
+    // Valid combinations
+    EXPECT_TRUE(TileMessage::validate_format_combination(DataType::U8, CompressionType::LZ4));
+    EXPECT_TRUE(TileMessage::validate_format_combination(DataType::U16, CompressionType::Zstd));
+    EXPECT_TRUE(TileMessage::validate_format_combination(DataType::F32, CompressionType::None));
+    
+    // Invalid data types
+    EXPECT_FALSE(TileMessage::validate_format_combination(static_cast<DataType>(99), CompressionType::LZ4));
+    
+    // Invalid compression types  
+    EXPECT_FALSE(TileMessage::validate_format_combination(DataType::U8, static_cast<CompressionType>(99)));
+}

@@ -93,8 +93,53 @@ std::unique_ptr<TileMessage> TileMessage::deserialize(const uint8_t* data, size_
 }
 
 bool TileMessage::is_valid() const {
-    return header_.is_valid() && 
-           header_.payload_bytes == payload_.size();
+    if (!header_.is_valid()) {
+        return false;
+    }
+    
+    // Payload size must match header
+    if (header_.payload_bytes != payload_.size()) {
+        return false;
+    }
+    
+    // Validate payload size makes sense for uncompressed data
+    size_t bytes_per_pixel = bytes_per_sample(static_cast<DataType>(header_.dtype));
+    size_t expected_uncompressed_size = static_cast<size_t>(header_.tile_w) * 
+                                       header_.tile_h * bytes_per_pixel;
+    
+    // For uncompressed data, sizes should match exactly
+    if (header_.compression == static_cast<uint8_t>(CompressionType::None)) {
+        if (payload_.size() != expected_uncompressed_size) {
+            spdlog::warn("Uncompressed tile payload size mismatch: expected={}, got={}", 
+                        expected_uncompressed_size, payload_.size());
+            return false;
+        }
+    } else {
+        // For compressed data, payload should be smaller than uncompressed
+        // but not ridiculously small (min 10% compression)
+        if (payload_.size() > expected_uncompressed_size) {
+            spdlog::warn("Compressed tile larger than uncompressed: compressed={}, uncompressed={}", 
+                        payload_.size(), expected_uncompressed_size);
+            return false;
+        }
+        
+        // Minimum reasonable compression (at least 1 byte per 16 pixels)
+        size_t min_compressed_size = (header_.tile_w * header_.tile_h + 15) / 16;
+        if (payload_.size() < min_compressed_size && payload_.size() > 0) {
+            spdlog::warn("Compressed tile suspiciously small: size={}, min_expected={}", 
+                        payload_.size(), min_compressed_size);
+            return false;
+        }
+    }
+    
+    // Check for empty payload when it should have data
+    if (payload_.size() == 0 && expected_uncompressed_size > 0) {
+        spdlog::warn("Empty tile payload for non-zero dimensions: {}x{}", 
+                    header_.tile_w, header_.tile_h);
+        return false;
+    }
+    
+    return true;
 }
 
 size_t TileMessage::bytes_per_sample(DataType dtype) {
@@ -141,12 +186,119 @@ const char* TileMessage::plane_name(PlaneType plane) {
 
 // TileData implementation
 bool TileData::is_valid() const {
-    return data.size() == expected_data_size();
+    // Validate tile dimensions
+    if (tile_w == 0 || tile_h == 0) {
+        return false;
+    }
+    
+    // Reasonable dimension limits (same as TileHeader)
+    if (tile_w > 2048 || tile_h > 2048) {
+        return false;
+    }
+    
+    // Coordinate bounds check  
+    if (tile_x > 1000000 || tile_y > 1000000) {
+        return false;
+    }
+    
+    // Slice bounds check
+    if (slice_index > 100000) {
+        return false;
+    }
+    
+    // Validate enum values
+    if (static_cast<uint8_t>(plane) > 2 || 
+        static_cast<uint8_t>(dtype) > 3) {
+        return false;
+    }
+    
+    // Data size must match expected size
+    size_t expected_size = expected_data_size();
+    if (data.size() != expected_size) {
+        spdlog::warn("TileData size mismatch: expected={}, got={} for {}x{} {}", 
+                    expected_size, data.size(), tile_w, tile_h, 
+                    TileMessage::dtype_name(dtype));
+        return false;
+    }
+    
+    // Check for reasonable data size (prevent huge allocations)
+    uint64_t pixel_count = static_cast<uint64_t>(tile_w) * tile_h;
+    if (pixel_count > 4 * 1024 * 1024) {
+        spdlog::warn("TileData pixel count too large: {} pixels ({}x{})", 
+                    pixel_count, tile_w, tile_h);
+        return false;
+    }
+    
+    return true;
 }
 
 size_t TileData::expected_data_size() const {
     size_t sample_size = TileMessage::bytes_per_sample(dtype);
     return tile_w * tile_h * sample_size;
+}
+
+// TileMessage validation utilities implementation
+bool TileMessage::validate_tile_request(PlaneType plane, uint32_t slice_idx,
+                                       uint32_t tile_x, uint32_t tile_y,
+                                       uint16_t tile_w, uint16_t tile_h) {
+    // Validate plane type
+    if (static_cast<uint8_t>(plane) > 2) {
+        spdlog::warn("Invalid plane type: {}", static_cast<uint8_t>(plane));
+        return false;
+    }
+    
+    // Validate slice index
+    if (slice_idx > ValidationLimits::MAX_SLICE_INDEX) {
+        spdlog::warn("Slice index too large: {} > {}", slice_idx, ValidationLimits::MAX_SLICE_INDEX);
+        return false;
+    }
+    
+    // Validate tile coordinates
+    if (tile_x > ValidationLimits::MAX_COORDINATE || tile_y > ValidationLimits::MAX_COORDINATE) {
+        spdlog::warn("Tile coordinates out of range: ({}, {}) > {}", 
+                    tile_x, tile_y, ValidationLimits::MAX_COORDINATE);
+        return false;
+    }
+    
+    // Validate tile dimensions
+    if (tile_w == 0 || tile_h == 0) {
+        spdlog::warn("Zero tile dimensions: {}x{}", tile_w, tile_h);
+        return false;
+    }
+    
+    if (tile_w > ValidationLimits::MAX_TILE_DIMENSION || tile_h > ValidationLimits::MAX_TILE_DIMENSION) {
+        spdlog::warn("Tile dimensions too large: {}x{} > {}", 
+                    tile_w, tile_h, ValidationLimits::MAX_TILE_DIMENSION);
+        return false;
+    }
+    
+    // Validate pixel count doesn't cause huge allocations
+    uint64_t pixel_count = static_cast<uint64_t>(tile_w) * tile_h;
+    if (pixel_count > ValidationLimits::MAX_PIXELS_PER_TILE) {
+        spdlog::warn("Too many pixels per tile: {} > {}", 
+                    pixel_count, ValidationLimits::MAX_PIXELS_PER_TILE);
+        return false;
+    }
+    
+    return true;
+}
+
+bool TileMessage::validate_format_combination(DataType dtype, CompressionType compression) {
+    // Validate data type enum
+    if (static_cast<uint8_t>(dtype) > 3) {
+        spdlog::warn("Invalid data type: {}", static_cast<uint8_t>(dtype));
+        return false;
+    }
+    
+    // Validate compression enum
+    if (static_cast<uint8_t>(compression) > 2) {
+        spdlog::warn("Invalid compression type: {}", static_cast<uint8_t>(compression));
+        return false;
+    }
+    
+    // All combinations currently supported
+    // Future: could add restrictions like "F32 doesn't benefit from LZ4"
+    return true;
 }
 
 std::unique_ptr<TileMessage> TileData::compress(CompressionType compression) const {

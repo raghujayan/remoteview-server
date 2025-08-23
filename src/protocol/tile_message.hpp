@@ -60,9 +60,57 @@ struct TileHeader {
     bool is_valid() const {
         return protocol_version == CURRENT_VERSION && 
                payload_bytes <= MAX_FRAME_SIZE &&
-               tile_w > 0 && tile_h > 0 &&
-               plane <= 2 && dtype <= 3 && compression <= 2;
+               validate_tile_bounds() &&
+               validate_enums() &&
+               validate_slice_bounds();
     }
+
+private:
+    /**
+     * Validate tile dimensions and coordinates
+     */
+    bool validate_tile_bounds() const {
+        // Tile dimensions must be positive and reasonable
+        if (tile_w == 0 || tile_h == 0) return false;
+        if (tile_w > 2048 || tile_h > 2048) return false; // Max 2K tiles
+        
+        // Tile coordinates must be reasonable (prevent integer overflow)
+        if (tile_x > 1000000 || tile_y > 1000000) return false;
+        
+        // Pixel count check (prevent huge allocations)
+        uint64_t pixel_count = static_cast<uint64_t>(tile_w) * tile_h;
+        if (pixel_count > 4 * 1024 * 1024) return false; // Max 4M pixels per tile
+        
+        return true;
+    }
+    
+    /**
+     * Validate enum values are within bounds
+     */
+    bool validate_enums() const {
+        // Plane type: 0=Inline, 1=Crossline, 2=TimeDepth
+        if (plane > 2) return false;
+        
+        // Data type: 0=U8, 1=U16, 2=F32, 3=MuLawU8
+        if (dtype > 3) return false;
+        
+        // Compression: 0=None, 1=LZ4, 2=Zstd
+        if (compression > 2) return false;
+        
+        return true;
+    }
+    
+    /**
+     * Validate slice index bounds
+     */
+    bool validate_slice_bounds() const {
+        // Slice index should be reasonable (prevent bad requests)
+        if (slice_index > 100000) return false; // Max 100K slices per volume
+        
+        return true;
+    }
+
+public:
     
     /**
      * Validate endianness by checking a magic number
@@ -154,6 +202,37 @@ public:
     static const char* dtype_name(DataType dtype);
     static const char* compression_name(CompressionType comp);
     static const char* plane_name(PlaneType plane);
+    
+    // Validation utilities for runtime bounds checking
+    struct ValidationLimits {
+        static constexpr uint16_t MAX_TILE_DIMENSION = 2048;
+        static constexpr uint32_t MAX_COORDINATE = 1000000;
+        static constexpr uint32_t MAX_SLICE_INDEX = 100000;
+        static constexpr uint64_t MAX_PIXELS_PER_TILE = 4 * 1024 * 1024; // 4M pixels
+        static constexpr size_t MAX_PAYLOAD_SIZE = 16 * 1024 * 1024;     // 16MB
+    };
+    
+    /**
+     * Validate tile request parameters before processing
+     * @param plane Seismic plane type
+     * @param slice_idx Slice index in volume
+     * @param tile_x Tile X coordinate
+     * @param tile_y Tile Y coordinate  
+     * @param tile_w Tile width in pixels
+     * @param tile_h Tile height in pixels
+     * @return true if parameters are safe to process
+     */
+    static bool validate_tile_request(PlaneType plane, uint32_t slice_idx, 
+                                     uint32_t tile_x, uint32_t tile_y,
+                                     uint16_t tile_w, uint16_t tile_h);
+    
+    /**
+     * Validate data type and compression combination
+     * @param dtype Data type for pixels
+     * @param compression Compression algorithm
+     * @return true if combination is supported
+     */
+    static bool validate_format_combination(DataType dtype, CompressionType compression);
 
 private:
     TileHeader header_{};
