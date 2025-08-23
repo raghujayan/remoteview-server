@@ -302,35 +302,22 @@ std::unique_ptr<TileData> VdsReader::read_tile(const TileRequest& request) {
             prefetch_context_.active_requests.insert(requestID);
         }
         
-        // Wait for completion (blocking) with periodic cancellation checks
-        bool success = false;
-        const int POLL_INTERVAL_MS = 10; // Check for cancellation every 10ms
+        // For now, we'll use blocking wait and check cancellation before/after
+        // TODO: Investigate if HueSpace API provides non-blocking completion check
+        // or request cancellation mechanisms in future versions
         
-        while (!success) {
-            // Check if request completed
-            success = Hue::ProxyLib::ProxyInterface::GetVolumeDataAccessInterface()->IsRequestComplete(requestID);
-            
-            if (success) {
-                // Request completed, get the result
-                success = Hue::ProxyLib::ProxyInterface::GetVolumeDataAccessInterface()->WaitForCompletion(requestID);
-                break;
+        // Check cancellation once more before blocking wait
+        if (should_cancel_request(request_generation)) {
+            spdlog::debug("Request {} cancelled before wait due to slice change", requestID);
+            {
+                std::lock_guard<std::mutex> lock(prefetch_context_.requests_mutex);
+                prefetch_context_.active_requests.erase(requestID);
             }
-            
-            // Check if we should cancel this request
-            if (should_cancel_request(request_generation)) {
-                spdlog::debug("Request {} cancelled during wait due to slice change", requestID);
-                // TODO: Cancel the request if HueSpace API supports it
-                // For now, just abandon the request (it will complete in background)
-                {
-                    std::lock_guard<std::mutex> lock(prefetch_context_.requests_mutex);
-                    prefetch_context_.active_requests.erase(requestID);
-                }
-                return nullptr; // Request cancelled
-            }
-            
-            // Sleep briefly before next check
-            std::this_thread::sleep_for(std::chrono::milliseconds(POLL_INTERVAL_MS));
+            return nullptr; // Request cancelled
         }
+        
+        // Block until completion (no cancellation during wait for now)
+        bool success = Hue::ProxyLib::ProxyInterface::GetVolumeDataAccessInterface()->WaitForCompletion(requestID);
         
         // Remove from active requests
         {
