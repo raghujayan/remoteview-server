@@ -1,0 +1,10 @@
+#include <gtest/gtest.h>
+#include <spdlog/spdlog.h>
+
+int main(int argc, char **argv) {
+    // Set log level to warning for tests to reduce noise
+    spdlog::set_level(spdlog::level::warn);
+    
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
+}

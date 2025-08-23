@@ -1,0 +1,37 @@
+{
+  "vds": {
+    "path": "/home/rocky/onnia2x3d_mig_Time.vds"
+  },
+  "server": {
+    "port": 8080,
+    "bind_address": "0.0.0.0"
+  },
+  "tiles": {
+    "default_size": 256,
+    "max_in_flight": 64
+  },
+  "cache": {
+    "size_mb": 1024
+  },
+  "compression": {
+    "algorithm": "lz4",
+    "level": 1
+  },
+  "adaptivity": {
+    "adaptive_tile_size": true,
+    "adaptive_compression": true
+  },
+  "security": {
+    "enable_dtls": true,
+    "cert_file": "",
+    "key_file": ""
+  },
+  "logging": {
+    "level": 2,
+    "file": ""
+  },
+  "metrics": {
+    "enabled": true,
+    "port": 9090
+  }
+}
