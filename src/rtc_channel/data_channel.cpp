@@ -96,7 +96,7 @@ bool DataChannelManager::send_tile(std::unique_ptr<protocol::TileMessage> tile) 
     }
     
     // Extract plane type from tile header
-    auto plane_idx = static_cast<size_t>(tile->get_header().plane);
+    auto plane_idx = static_cast<size_t>(tile->header().plane);
     if (plane_idx >= 3) {
         spdlog::error("Invalid plane index in tile: {}", plane_idx);
         return false;
@@ -171,7 +171,13 @@ bool DataChannelManager::is_congested() const {
 
 DataChannelManager::AllMetrics DataChannelManager::get_all_metrics() const {
     AllMetrics metrics;
-    metrics.congestion = metrics_;
+    
+    // Manually copy congestion metrics (atomic members can't be copy-assigned)
+    metrics.congestion.buffered_bytes.store(metrics_.buffered_bytes.load());
+    metrics.congestion.bytes_sent.store(metrics_.bytes_sent.load());
+    metrics.congestion.congestion_events.store(metrics_.congestion_events.load());
+    metrics.congestion.rtt_ms.store(metrics_.rtt_ms.load());
+    metrics.congestion.last_rtt_update = metrics_.last_rtt_update;
     
     for (size_t i = 0; i < 3; ++i) {
         metrics.plane_stats[i] = plane_queues_[i]->get_stats();
