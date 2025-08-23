@@ -12,6 +12,7 @@ set(TEST_SOURCES
     test_compressor.cpp
     test_tile_cache.cpp
     test_protocol.cpp
+    test_prefetch_cancellation.cpp
     test_main.cpp
 )
 
@@ -26,6 +27,7 @@ target_link_libraries(remoteview_tests
     remoteview_tile_cache
     remoteview_protocol
     remoteview_config
+    remoteview_vds_access
     spdlog::spdlog
     nlohmann_json::nlohmann_json
     ${HUESPACE_LIBRARY}

@@ -2,6 +2,9 @@
 
 #include "config/config.hpp"
 #include "vds_metadata.hpp"
+#include <unordered_set>
+#include <mutex>
+#include <atomic>
 
 /**
  * HueSpace/OpenVDS API Headers
@@ -96,6 +99,44 @@ public:
     // Main tile reading function - follows HueSpace async pattern
     std::unique_ptr<TileData> read_tile(const TileRequest& request);
     
+    /**
+     * Prefetch cancellation system for slice changes
+     */
+    struct PrefetchContext {
+        uint32_t current_slice_inline = 0;
+        uint32_t current_slice_xline = 0; 
+        uint32_t current_slice_z = 0;
+        
+        // Track active requests that should be cancelled on slice change
+        std::unordered_set<int64_t> active_requests;
+        std::mutex requests_mutex;
+        
+        // Atomic flag to signal cancellation to all active requests
+        std::atomic<bool> cancel_prefetch{false};
+        std::atomic<uint64_t> slice_change_generation{0}; // Increment on each slice change
+    };
+    
+    /**
+     * Cancel all pending prefetch requests for current slice
+     * Called when user changes to a different slice
+     */
+    void cancel_prefetch_requests();
+    
+    /**
+     * Update current slice indices and cancel obsolete prefetch
+     * @param inline_idx New inline slice index
+     * @param xline_idx New crossline slice index 
+     * @param z_idx New time/depth slice index
+     */
+    void set_current_slice(uint32_t inline_idx, uint32_t xline_idx, uint32_t z_idx);
+    
+    /**
+     * Check if a request should be cancelled due to slice change
+     * @param generation Generation number when request started
+     * @return true if request should be cancelled
+     */
+    bool should_cancel_request(uint64_t generation) const;
+    
     bool is_valid_tile_request(const TileRequest& request) const;
     
     std::vector<uint32_t> get_available_downsample_levels() const;
@@ -125,6 +166,9 @@ private:
     std::mutex access_mutex_;
     bool initialized_ = false;
     bool cuda_available_ = false;
+    
+    // Prefetch cancellation context
+    PrefetchContext prefetch_context_;
     
     // Request management following StandAloneLoad pattern
     static constexpr int MAX_REQUESTS_IN_FLIGHT = 2;

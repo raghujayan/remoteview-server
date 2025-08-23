@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <chrono>
+#include <thread>
 
 #ifdef CUDA_AVAILABLE
 #include <cuda_runtime.h>
@@ -272,6 +273,15 @@ std::unique_ptr<TileData> VdsReader::read_tile(const TileRequest& request) {
             endRead[i] = 1;
         }
         
+        // Capture generation number before starting request to detect slice changes
+        uint64_t request_generation = prefetch_context_.slice_change_generation.load();
+        
+        // Check if we should cancel before starting the expensive operation
+        if (should_cancel_request(request_generation)) {
+            spdlog::debug("Request cancelled before starting due to slice change");
+            return nullptr; // Request cancelled
+        }
+        
         // Make async request following StandAloneLoad pattern
         Hue::ProxyLib::int64 requestID;
         
@@ -286,11 +296,56 @@ std::unique_ptr<TileData> VdsReader::read_tile(const TileRequest& request) {
                 request.downsample_level, 0, startRead, endRead, format);
         }
         
-        // Wait for completion (blocking)
-        bool success = Hue::ProxyLib::ProxyInterface::GetVolumeDataAccessInterface()->WaitForCompletion(requestID);
+        // Track active request for potential cancellation
+        {
+            std::lock_guard<std::mutex> lock(prefetch_context_.requests_mutex);
+            prefetch_context_.active_requests.insert(requestID);
+        }
+        
+        // Wait for completion (blocking) with periodic cancellation checks
+        bool success = false;
+        const int POLL_INTERVAL_MS = 10; // Check for cancellation every 10ms
+        
+        while (!success) {
+            // Check if request completed
+            success = Hue::ProxyLib::ProxyInterface::GetVolumeDataAccessInterface()->IsRequestComplete(requestID);
+            
+            if (success) {
+                // Request completed, get the result
+                success = Hue::ProxyLib::ProxyInterface::GetVolumeDataAccessInterface()->WaitForCompletion(requestID);
+                break;
+            }
+            
+            // Check if we should cancel this request
+            if (should_cancel_request(request_generation)) {
+                spdlog::debug("Request {} cancelled during wait due to slice change", requestID);
+                // TODO: Cancel the request if HueSpace API supports it
+                // For now, just abandon the request (it will complete in background)
+                {
+                    std::lock_guard<std::mutex> lock(prefetch_context_.requests_mutex);
+                    prefetch_context_.active_requests.erase(requestID);
+                }
+                return nullptr; // Request cancelled
+            }
+            
+            // Sleep briefly before next check
+            std::this_thread::sleep_for(std::chrono::milliseconds(POLL_INTERVAL_MS));
+        }
+        
+        // Remove from active requests
+        {
+            std::lock_guard<std::mutex> lock(prefetch_context_.requests_mutex);
+            prefetch_context_.active_requests.erase(requestID);
+        }
         
         if (!success) {
             throw std::runtime_error("VDS volume subset request failed");
+        }
+        
+        // Final cancellation check before expensive memcpy
+        if (should_cancel_request(request_generation)) {
+            spdlog::debug("Request cancelled after completion but before data copy");
+            return nullptr; // Request cancelled
         }
         
         // Copy data from buffer to tile data
@@ -403,6 +458,62 @@ void VdsReader::set_cache_policy(bool immediate_timeout) {
     if (immediate_timeout) {
         vds_file_->SetCachePolicy(Hue::ProxyLib::VDSCachePolicy::TimeoutImmediately);
     }
+}
+
+// Prefetch cancellation implementation
+void VdsReader::cancel_prefetch_requests() {
+    std::lock_guard<std::mutex> lock(prefetch_context_.requests_mutex);
+    
+    spdlog::info("Cancelling {} active prefetch requests due to slice change", 
+                prefetch_context_.active_requests.size());
+    
+    // Signal all active requests to cancel
+    prefetch_context_.cancel_prefetch = true;
+    
+    // TODO: If HueSpace API supports request cancellation, cancel individual requests
+    // For now we rely on early-exit checks in the reading loop
+    for (auto request_id : prefetch_context_.active_requests) {
+        spdlog::debug("Marking request {} for cancellation", request_id);
+        // Future: Hue::ProxyLib::ProxyInterface::GetVolumeDataAccessInterface()->CancelRequest(request_id);
+    }
+    
+    prefetch_context_.active_requests.clear();
+    prefetch_context_.slice_change_generation++;
+}
+
+void VdsReader::set_current_slice(uint32_t inline_idx, uint32_t xline_idx, uint32_t z_idx) {
+    std::lock_guard<std::mutex> lock(prefetch_context_.requests_mutex);
+    
+    bool slice_changed = (prefetch_context_.current_slice_inline != inline_idx ||
+                         prefetch_context_.current_slice_xline != xline_idx ||
+                         prefetch_context_.current_slice_z != z_idx);
+    
+    if (slice_changed) {
+        spdlog::info("Slice changed from ({},{},{}) to ({},{},{}) - cancelling prefetch",
+                    prefetch_context_.current_slice_inline, prefetch_context_.current_slice_xline, 
+                    prefetch_context_.current_slice_z, inline_idx, xline_idx, z_idx);
+        
+        // Update slice indices
+        prefetch_context_.current_slice_inline = inline_idx;
+        prefetch_context_.current_slice_xline = xline_idx; 
+        prefetch_context_.current_slice_z = z_idx;
+        
+        // Cancel all active prefetch requests for the old slice
+        if (!prefetch_context_.active_requests.empty()) {
+            spdlog::debug("Cancelling {} active requests", prefetch_context_.active_requests.size());
+            prefetch_context_.cancel_prefetch = true;
+            prefetch_context_.active_requests.clear();
+            prefetch_context_.slice_change_generation++;
+        }
+        
+        // Reset cancellation flag for new slice
+        prefetch_context_.cancel_prefetch = false;
+    }
+}
+
+bool VdsReader::should_cancel_request(uint64_t generation) const {
+    return prefetch_context_.cancel_prefetch.load() || 
+           generation < prefetch_context_.slice_change_generation.load();
 }
 
 } // namespace remoteview

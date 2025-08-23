@@ -90,4 +90,30 @@ void Server::main_loop() {
     }
 }
 
+void Server::handle_slice_change(uint32_t inline_idx, uint32_t xline_idx, uint32_t z_idx) {
+    if (!vds_reader_) {
+        spdlog::warn("Cannot handle slice change - VDS reader not initialized");
+        return;
+    }
+    
+    spdlog::info("Server handling slice change to ({},{},{})", inline_idx, xline_idx, z_idx);
+    
+    // Update VDS reader with new slice - this cancels prefetch requests
+    vds_reader_->set_current_slice(inline_idx, xline_idx, z_idx);
+    
+    // Clear DataChannel queues as they contain tiles from old slice
+    if (webrtc_server_) {
+        // TODO: Get DataChannelManager from WebRtcServer and clear queues
+        // webrtc_server_->get_data_channel_manager()->clear_all_queues();
+        spdlog::debug("Clearing DataChannel queues due to slice change");
+    }
+    
+    // Optionally clear tile cache for old slice (aggressive cache invalidation)
+    // Note: This could be made smarter to only evict tiles from the old slice
+    if (tile_cache_) {
+        spdlog::debug("Clearing tile cache due to slice change");
+        tile_cache_->clear();
+    }
+}
+
 } // namespace remoteview

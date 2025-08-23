@@ -19,6 +19,14 @@ public:
     void start();
     void stop();
     bool is_running() const { return running_.load(); }
+    
+    /**
+     * Handle slice change from client - triggers prefetch cancellation
+     * @param inline_idx New inline slice index
+     * @param xline_idx New crossline slice index
+     * @param z_idx New time/depth slice index
+     */
+    void handle_slice_change(uint32_t inline_idx, uint32_t xline_idx, uint32_t z_idx);
 
 private:
     void setup_signal_handlers();
