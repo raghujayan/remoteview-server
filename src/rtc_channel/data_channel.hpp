@@ -126,6 +126,15 @@ public:
         std::atomic<uint32_t> rtt_ms{0};             // Round-trip time from ping/pong
         std::chrono::steady_clock::time_point last_rtt_update;
     };
+    
+    // Snapshot struct with regular members (can be copied)
+    struct CongestionSnapshot {
+        size_t buffered_bytes = 0;        // Current buffered amount
+        uint64_t bytes_sent = 0;          // Total bytes transmitted
+        uint64_t congestion_events = 0;   // Times we hit buffer limits
+        uint32_t rtt_ms = 0;             // Round-trip time from ping/pong
+        std::chrono::steady_clock::time_point last_rtt_update;
+    };
 
 private:
     ChannelConfig config_;
@@ -179,7 +188,7 @@ public:
      * @return All queue and congestion statistics
      */
     struct AllMetrics {
-        CongestionMetrics congestion;
+        CongestionSnapshot congestion;
         std::array<PlaneQueue::QueueStats, 3> plane_stats;
     };
     

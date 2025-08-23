@@ -172,11 +172,11 @@ bool DataChannelManager::is_congested() const {
 DataChannelManager::AllMetrics DataChannelManager::get_all_metrics() const {
     AllMetrics metrics;
     
-    // Manually copy congestion metrics (atomic members can't be copy-assigned)
-    metrics.congestion.buffered_bytes.store(metrics_.buffered_bytes.load());
-    metrics.congestion.bytes_sent.store(metrics_.bytes_sent.load());
-    metrics.congestion.congestion_events.store(metrics_.congestion_events.load());
-    metrics.congestion.rtt_ms.store(metrics_.rtt_ms.load());
+    // Create snapshot of congestion metrics (atomic -> regular members)
+    metrics.congestion.buffered_bytes = metrics_.buffered_bytes.load();
+    metrics.congestion.bytes_sent = metrics_.bytes_sent.load();
+    metrics.congestion.congestion_events = metrics_.congestion_events.load();
+    metrics.congestion.rtt_ms = metrics_.rtt_ms.load();
     metrics.congestion.last_rtt_update = metrics_.last_rtt_update;
     
     for (size_t i = 0; i < 3; ++i) {
