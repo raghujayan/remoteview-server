@@ -25,6 +25,7 @@
  */
 
 #include "compressor.hpp"
+#include "metrics/metrics_collector.hpp"
 #include <spdlog/spdlog.h>
 #include <lz4.h>
 #include <lz4hc.h>
@@ -95,6 +96,9 @@ std::vector<uint8_t> LZ4Compressor::compress(const uint8_t* data, size_t size) {
     
     if (LZ4F_isError(compressed_size)) {
         spdlog::error("LZ4F frame compression failed: {}", LZ4F_getErrorName(compressed_size));
+        if (auto* metrics = MetricsCollector::instance()) {
+            metrics->increment_compression_errors();
+        }
         return std::vector<uint8_t>(data, data + size); // Return uncompressed
     }
     
@@ -110,6 +114,11 @@ std::vector<uint8_t> LZ4Compressor::compress(const uint8_t* data, size_t size) {
         stats_.total_input_bytes += size;
         stats_.total_output_bytes += compressed_size;
         stats_.total_compress_time_ms += duration.count() / 1000.0;
+    }
+    
+    // Update global metrics
+    if (auto* metrics = MetricsCollector::instance()) {
+        metrics->record_compression(compressed_size, size);
     }
     
     spdlog::debug("LZ4Frame compressed {} -> {} bytes ({:.1f}%)", 
@@ -239,6 +248,9 @@ std::vector<uint8_t> ZstdCompressor::compress(const uint8_t* data, size_t size) 
     
     if (ZSTD_isError(compressed_size)) {
         spdlog::error("ZstdFrame compression failed: {}", ZSTD_getErrorName(compressed_size));
+        if (auto* metrics = MetricsCollector::instance()) {
+            metrics->increment_compression_errors();
+        }
         return std::vector<uint8_t>(data, data + size); // Return uncompressed
     }
     
@@ -254,6 +266,11 @@ std::vector<uint8_t> ZstdCompressor::compress(const uint8_t* data, size_t size) 
         stats_.total_input_bytes += size;
         stats_.total_output_bytes += compressed_size;
         stats_.total_compress_time_ms += duration.count() / 1000.0;
+    }
+    
+    // Update global metrics
+    if (auto* metrics = MetricsCollector::instance()) {
+        metrics->record_compression(compressed_size, size);
     }
     
     spdlog::debug("ZstdFrame compressed {} -> {} bytes ({:.1f}%)", 

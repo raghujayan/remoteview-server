@@ -116,4 +116,39 @@ void Server::handle_slice_change(uint32_t inline_idx, uint32_t xline_idx, uint32
     }
 }
 
+void Server::configure_testing_hooks(const TestingHooks& hooks) {
+    testing_hooks_ = hooks;
+    
+    if (hooks.enabled) {
+        spdlog::info("Testing hooks configured:");
+        
+        if (hooks.roi_inline_end > 0) {
+            spdlog::info("  ROI enabled: inline({}-{}), xline({}-{}), z({}-{})",
+                hooks.roi_inline_start, hooks.roi_inline_end,
+                hooks.roi_xline_start, hooks.roi_xline_end,
+                hooks.roi_z_start, hooks.roi_z_end);
+        }
+        
+        if (hooks.enable_tile_dump) {
+            spdlog::info("  Tile dumping enabled to: {}", hooks.dump_directory);
+            
+            // Create dump directory if it doesn't exist
+            // TODO: Add filesystem include for directory creation
+            spdlog::debug("  Dump directory: {}", hooks.dump_directory);
+        }
+        
+        if (hooks.enable_performance_profiling) {
+            spdlog::info("  Performance profiling enabled");
+            
+            // Enable detailed metrics collection
+            if (metrics_) {
+                // TODO: Enable performance profiling mode in metrics
+                spdlog::debug("  Metrics profiling mode would be enabled");
+            }
+        }
+        
+        spdlog::info("  Max test tiles: {}", hooks.max_test_tiles);
+    }
+}
+
 } // namespace remoteview

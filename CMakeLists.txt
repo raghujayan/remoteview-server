@@ -26,6 +26,16 @@ if(NOT nlohmann_json_FOUND)
     target_include_directories(nlohmann_json INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 endif()
 
+# Try to find httplib (cpp-httplib), fallback to header-only if not found
+find_package(httplib QUIET)
+if(NOT httplib_FOUND)
+    message(STATUS "httplib package not found, using header-only fallback")
+    # Create header-only target with our local header
+    add_library(httplib INTERFACE)
+    add_library(httplib::httplib ALIAS httplib)
+    target_include_directories(httplib INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+endif()
+
 # HueSpace/OpenVDS includes and libraries
 find_path(OPENVDS_INCLUDE_DIR 
     NAMES HueSpace3/ProxyInterfaceFactory.h

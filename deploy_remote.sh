@@ -11,6 +11,7 @@ REMOTE_HOST="10.7.4.116"
 SSH_KEY="~/.ssh/key.pem"
 REMOTE_DIR="/home/rocky/remoteview-server"
 HUESPACE_LICENSE="5053@license.cloud.bluware.com"
+VDS_FILE_PATH="/home/rocky/onnia2x3d_mig_Time.vds"
 
 # Colors for output
 RED='\033[0;31m'
@@ -37,6 +38,8 @@ if [[ ! -f ~/.ssh/key.pem ]]; then
 fi
 
 log_info "Starting remote deployment to ${REMOTE_USER}@${REMOTE_HOST}"
+log_info "HueSpace License: ${HUESPACE_LICENSE}"
+log_info "Expected VDS file: ${VDS_FILE_PATH}"
 
 # Create remote directory structure
 log_info "Creating remote directory structure..."
@@ -62,8 +65,18 @@ log_info "Building on remote server..."
 ssh -i "${SSH_KEY}" "${REMOTE_USER}@${REMOTE_HOST}" "
     cd ${REMOTE_DIR}
     
-    # Set HueSpace license
+    # Set HueSpace license environment variable
     export HUE_LICENSE_FILE=${HUESPACE_LICENSE}
+    echo 'HueSpace license set: '\$HUE_LICENSE_FILE
+    
+    # Check if VDS file exists
+    if [[ -f \"${VDS_FILE_PATH}\" ]]; then
+        echo 'VDS file found: ${VDS_FILE_PATH}'
+        ls -la \"${VDS_FILE_PATH}\"
+    else
+        echo 'WARNING: VDS file not found at ${VDS_FILE_PATH}'
+        echo 'Server will use default config which may fail at runtime'
+    fi
     
     # Create build directory
     mkdir -p build
@@ -93,7 +106,7 @@ ssh -i "${SSH_KEY}" "${REMOTE_USER}@${REMOTE_HOST}" "
 if ssh -i "${SSH_KEY}" "${REMOTE_USER}@${REMOTE_HOST}" "[[ -x ${REMOTE_DIR}/build/remoteview_server ]]"; then
     log_info "Build completed successfully!"
     
-    # Show executable info
+    # Show executable info and environment verification
     ssh -i "${SSH_KEY}" "${REMOTE_USER}@${REMOTE_HOST}" "
         echo 'Executable info:'
         ls -la ${REMOTE_DIR}/build/remoteview_server
@@ -101,10 +114,26 @@ if ssh -i "${SSH_KEY}" "${REMOTE_USER}@${REMOTE_HOST}" "[[ -x ${REMOTE_DIR}/buil
         
         echo 'Checking dependencies:'
         ldd ${REMOTE_DIR}/build/remoteview_server | head -20
+        
+        echo 'Environment verification:'
+        export HUE_LICENSE_FILE=${HUESPACE_LICENSE}
+        echo 'HueSpace License: '\$HUE_LICENSE_FILE
+        
+        echo 'VDS file status:'
+        if [[ -f \"${VDS_FILE_PATH}\" ]]; then
+            echo '✓ VDS file exists: ${VDS_FILE_PATH}'
+            stat \"${VDS_FILE_PATH}\" | grep -E '(Size|Access|Modify)'
+        else
+            echo '✗ VDS file missing: ${VDS_FILE_PATH}'
+            echo 'Available VDS files in /home/rocky:'
+            find /home/rocky -name '*.vds' -type f 2>/dev/null | head -5 || echo 'No .vds files found'
+        fi
     "
     
     log_info "RemoteView server ready at ${REMOTE_DIR}/build/remoteview_server"
-    log_info "To run: ssh -i ${SSH_KEY} ${REMOTE_USER}@${REMOTE_HOST} 'cd ${REMOTE_DIR} && ./build/remoteview_server'"
+    log_info "To run: ssh -i ${SSH_KEY} ${REMOTE_USER}@${REMOTE_HOST} 'cd ${REMOTE_DIR} && export HUE_LICENSE_FILE=${HUESPACE_LICENSE} && ./build/remoteview_server'"
+    log_info "With custom VDS: ssh -i ${SSH_KEY} ${REMOTE_USER}@${REMOTE_HOST} 'cd ${REMOTE_DIR} && export HUE_LICENSE_FILE=${HUESPACE_LICENSE} && ./build/remoteview_server --vds-file /path/to/your.vds'"
+    log_info "Enable testing: ssh -i ${SSH_KEY} ${REMOTE_USER}@${REMOTE_HOST} 'cd ${REMOTE_DIR} && export HUE_LICENSE_FILE=${HUESPACE_LICENSE} && ./build/remoteview_server --enable-testing --roi 100,200,300,400,0,1000'"
     
 else
     log_error "Build failed! Check the build output above."
@@ -112,3 +141,6 @@ else
 fi
 
 log_info "Deployment completed successfully!"
+log_info "Metrics endpoint will be available at http://${REMOTE_HOST}:9090/metrics"
+log_info "Server will listen on port 8080 for WebSocket connections"
+log_info "Remember to set HUE_LICENSE_FILE=${HUESPACE_LICENSE} when running the server"

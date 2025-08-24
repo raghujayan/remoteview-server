@@ -1,5 +1,6 @@
 #include "cache.hpp"
 #include "vds_access/vds_reader.hpp"  // For TileData definition
+#include "metrics/metrics_collector.hpp"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 
@@ -147,6 +148,12 @@ std::unique_ptr<remoteview::TileData> TileCache::get(const TileKey& key) {
     if (it == cache_map_.end()) {
         // Cache miss - tile not found in cache
         misses_++;
+        
+        // Update metrics
+        if (auto* metrics = MetricsCollector::instance()) {
+            metrics->record_cache_miss();
+        }
+        
         return nullptr;  // Caller must load from VDS
     }
     
@@ -161,6 +168,12 @@ std::unique_ptr<remoteview::TileData> TileCache::get(const TileKey& key) {
     it->second->get()->last_access = std::chrono::steady_clock::now();
     
     hits_++;  // Update cache hit statistics
+    
+    // Update metrics
+    if (auto* metrics = MetricsCollector::instance()) {
+        metrics->record_cache_hit();
+        metrics->increment_tiles_served();
+    }
     
     // Create a COPY of the cached tile data to return
     // This prevents the caller from modifying the cached data
@@ -213,6 +226,12 @@ void TileCache::put(const TileKey& key, std::unique_ptr<remoteview::TileData> da
     cache_map_[key] = cache_list_.begin();
     
     current_size_bytes_ += entry_size;
+    
+    // Update metrics
+    if (auto* metrics = MetricsCollector::instance()) {
+        metrics->increment_tiles_cached();
+        metrics->update_cache_size(current_size_bytes_);
+    }
     
     // Evict if necessary
     while (should_evict()) {

@@ -8,6 +8,7 @@ target_link_libraries(remoteview_metrics
     spdlog::spdlog
     nlohmann_json::nlohmann_json
     remoteview_config
+    httplib::httplib
 )
 
 target_include_directories(remoteview_metrics PUBLIC

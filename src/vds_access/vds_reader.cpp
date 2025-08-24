@@ -1,4 +1,5 @@
 #include "vds_reader.hpp"
+#include "metrics/metrics_collector.hpp"
 #include <spdlog/spdlog.h>
 #include <stdexcept>
 #include <algorithm>
@@ -196,6 +197,9 @@ std::unique_ptr<TileData> VdsReader::read_tile(const TileRequest& request) {
     }
     
     if (!is_valid_tile_request(request)) {
+        if (auto* metrics = MetricsCollector::instance()) {
+            metrics->increment_validation_errors();
+        }
         throw std::invalid_argument("Invalid tile request parameters");
     }
     
@@ -279,6 +283,9 @@ std::unique_ptr<TileData> VdsReader::read_tile(const TileRequest& request) {
         // Check if we should cancel before starting the expensive operation
         if (should_cancel_request(request_generation)) {
             spdlog::debug("Request cancelled before starting due to slice change");
+            if (auto* metrics = MetricsCollector::instance()) {
+                metrics->increment_prefetch_cancellations();
+            }
             return nullptr; // Request cancelled
         }
         
@@ -313,6 +320,9 @@ std::unique_ptr<TileData> VdsReader::read_tile(const TileRequest& request) {
                 std::lock_guard<std::mutex> lock(prefetch_context_.requests_mutex);
                 prefetch_context_.active_requests.erase(requestID);
             }
+            if (auto* metrics = MetricsCollector::instance()) {
+                metrics->increment_prefetch_cancellations();
+            }
             return nullptr; // Request cancelled
         }
         
@@ -326,12 +336,18 @@ std::unique_ptr<TileData> VdsReader::read_tile(const TileRequest& request) {
         }
         
         if (!success) {
+            if (auto* metrics = MetricsCollector::instance()) {
+                metrics->increment_vds_read_errors();
+            }
             throw std::runtime_error("VDS volume subset request failed");
         }
         
         // Final cancellation check before expensive memcpy
         if (should_cancel_request(request_generation)) {
             spdlog::debug("Request cancelled after completion but before data copy");
+            if (auto* metrics = MetricsCollector::instance()) {
+                metrics->increment_prefetch_cancellations();
+            }
             return nullptr; // Request cancelled
         }
         
@@ -348,6 +364,12 @@ std::unique_ptr<TileData> VdsReader::read_tile(const TileRequest& request) {
         stats_.total_bytes += required_size;
         stats_.total_time_ms += duration.count() / 1000.0;
         
+        // Update metrics
+        if (auto* metrics = MetricsCollector::instance()) {
+            metrics->increment_tiles_generated();
+            metrics->record_tile_generation_time(duration.count() / 1000.0);
+        }
+        
         spdlog::debug("Read tile {}x{} from plane {} slice {} in {:.2f}ms",
                      tile_data->width, tile_data->height, request.plane_index, 
                      request.slice_index, duration.count() / 1000.0);
@@ -355,6 +377,9 @@ std::unique_ptr<TileData> VdsReader::read_tile(const TileRequest& request) {
         return tile_data;
         
     } catch (const std::exception& e) {
+        if (auto* metrics = MetricsCollector::instance()) {
+            metrics->increment_vds_read_errors();
+        }
         spdlog::error("Failed to read tile: {}", e.what());
         throw;
     }

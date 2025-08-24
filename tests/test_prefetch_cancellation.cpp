@@ -11,8 +11,7 @@ protected:
     void SetUp() override {
         // Create a basic config for testing
         config_ = std::make_shared<Config>();
-        config_->set_data_dir(".");
-        config_->set_vds_file("test.vds"); // Non-existent file is OK for this test
+        // We don't need to set VDS file path - we're testing cancellation logic only
         
         vds_reader_ = std::make_unique<VdsReader>(config_);
         // Note: We won't initialize() since we don't have a real VDS file
