@@ -730,6 +730,24 @@ void HueSpaceRenderer::render_huespace() {
         spdlog::info("Buffer allocation for downsample level {}: {}x{} = {} floats", 
                      downsample_level, actual_width, actual_height, buffer_size);
         
+        // Recalculate target dimensions based on ACTUAL downsampled dimensions
+        // to preserve aspect ratio correctly
+        float actual_aspect = (float)actual_width / (float)actual_height;
+        if (actual_aspect > frame_aspect) {
+            // Slice is wider - fit to width
+            target_width = render_width;
+            target_height = (int)(render_width / actual_aspect);
+        } else {
+            // Slice is taller - fit to height
+            target_height = render_height;
+            target_width = (int)(render_height * actual_aspect);
+        }
+        
+        // Ensure slice_data buffer is correctly sized for target dimensions
+        slice_data.resize(target_width * target_height);
+        
+        spdlog::info("Target dimensions for rendering: {}x{}", target_width, target_height);
+        
         // Prepare buffer for VDS data with correct size
         std::vector<float> vds_buffer(buffer_size);
         
