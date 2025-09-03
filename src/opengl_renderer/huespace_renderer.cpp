@@ -705,14 +705,33 @@ void HueSpaceRenderer::render_huespace() {
             downsample_level++;
         }
         
-        int actual_width = width >> downsample_level;
-        int actual_height = height >> downsample_level;
+        // Calculate actual buffer size based on what we're requesting
+        // The buffer size depends on the slice type and downsample level
+        int buffer_size = 0;
+        int actual_width = 0;
+        int actual_height = 0;
         
-        spdlog::debug("Reading VDS slice at downsample level {}: {}x{}", 
-                     downsample_level, actual_width, actual_height);
+        if (slice_params_.show_inline) {
+            // Inline slice: we read full crossline × time
+            actual_width = xline_count >> downsample_level;
+            actual_height = sample_count >> downsample_level;
+        } else if (slice_params_.show_crossline) {
+            // Crossline slice: we read full inline × time
+            actual_width = inline_count >> downsample_level;
+            actual_height = sample_count >> downsample_level;
+        } else {
+            // Time slice: we read full inline × crossline
+            actual_width = inline_count >> downsample_level;
+            actual_height = xline_count >> downsample_level;
+        }
         
-        // Prepare buffer for VDS data
-        std::vector<float> vds_buffer(actual_width * actual_height);
+        buffer_size = actual_width * actual_height;
+        
+        spdlog::info("Buffer allocation for downsample level {}: {}x{} = {} floats", 
+                     downsample_level, actual_width, actual_height, buffer_size);
+        
+        // Prepare buffer for VDS data with correct size
+        std::vector<float> vds_buffer(buffer_size);
         
         // Set up read region coordinates (like the working sample code)
         int startRead[Hue::HueSpaceLib::VolumeDataLayout::Dimensionality_Max] = {0, 0, 0, 0, 0, 0};
