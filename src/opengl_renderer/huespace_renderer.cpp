@@ -673,8 +673,8 @@ void HueSpaceRenderer::render_huespace() {
             target_width = (int)(render_height * slice_aspect);
         }
         
-        // Create downsampled data at render resolution
-        std::vector<float> slice_data(target_width * target_height);
+        // Don't create slice_data yet - we'll create it after calculating actual dimensions
+        std::vector<float> slice_data;
         
         // Use VDS API to read slice (simplified - normally would use VolumeDataPageAccessor)
         int min_bounds[6] = {0};
@@ -743,10 +743,11 @@ void HueSpaceRenderer::render_huespace() {
             target_width = (int)(render_height * actual_aspect);
         }
         
-        // Ensure slice_data buffer is correctly sized for target dimensions
+        // Allocate slice_data buffer with correct size
         slice_data.resize(target_width * target_height);
         
-        spdlog::info("Target dimensions for rendering: {}x{}", target_width, target_height);
+        spdlog::info("Target dimensions for rendering: {}x{} (buffer size: {})", 
+                    target_width, target_height, slice_data.size());
         
         // Prepare buffer for VDS data with correct size
         std::vector<float> vds_buffer(buffer_size);
@@ -893,7 +894,13 @@ void HueSpaceRenderer::render_huespace() {
                 float v1 = v01 * (1.0f - fx) + v11 * fx;
                 float value = v0 * (1.0f - fy) + v1 * fy;
                 
-                slice_data[y * target_width + x] = value;
+                // Safety check for output buffer
+                int out_idx = y * target_width + x;
+                if (out_idx >= 0 && out_idx < slice_data.size()) {
+                    slice_data[out_idx] = value;
+                } else {
+                    spdlog::error("Output index out of bounds: {} (max: {})", out_idx, slice_data.size() - 1);
+                }
             }
         }
         
