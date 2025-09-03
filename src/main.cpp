@@ -44,7 +44,8 @@ void print_usage(const char* program_name) {
     std::cout << "                                Set region of interest for testing\n";
     std::cout << "  --dump-tiles DIR              Enable tile dumping to directory\n";
     std::cout << "  --profile                     Enable performance profiling\n";
-    std::cout << "  --max-test-tiles N            Limit number of tiles for testing\n\n";
+    std::cout << "  --max-test-tiles N            Limit number of tiles for testing\n";
+    std::cout << "  --test-opengl                 Test OpenGL rendering and exit\n\n";
     std::cout << "Examples:\n";
     std::cout << "  " << program_name << " --config myconfig.json\n";
     std::cout << "  " << program_name << " --enable-testing --roi 100,200,300,400,0,1000\n";
@@ -107,6 +108,7 @@ int main(int argc, char* argv[]) {
         std::string log_level_str;
         uint16_t port_override = 0;
         uint16_t metrics_port_override = 0;
+        bool test_opengl = false;
         
         static struct option long_options[] = {
             {"help", no_argument, 0, 'h'},
@@ -121,6 +123,7 @@ int main(int argc, char* argv[]) {
             {"dump-tiles", required_argument, 0, 2003},
             {"profile", no_argument, 0, 2004},
             {"max-test-tiles", required_argument, 0, 2005},
+            {"test-opengl", no_argument, 0, 2006},
             {0, 0, 0, 0}
         };
         
@@ -171,6 +174,9 @@ int main(int argc, char* argv[]) {
                 case 2005: // --max-test-tiles
                     testing_hooks.max_test_tiles = static_cast<uint32_t>(std::stoul(optarg));
                     testing_hooks.enabled = true;
+                    break;
+                case 2006: // --test-opengl
+                    test_opengl = true;
                     break;
                 case '?':
                     std::cerr << "Use --help for usage information\n";
@@ -250,6 +256,13 @@ int main(int argc, char* argv[]) {
         // Configure testing hooks if enabled
         if (testing_hooks.enabled) {
             server.configure_testing_hooks(testing_hooks);
+        }
+        
+        // Test OpenGL rendering if requested
+        if (test_opengl) {
+            spdlog::info("OpenGL rendering test mode enabled");
+            bool success = server.test_opengl_rendering();
+            return success ? 0 : 1;
         }
         
         server.start();  // Blocks until server is terminated

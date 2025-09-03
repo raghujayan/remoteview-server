@@ -9,8 +9,12 @@
 #include <thread>
 #include <unordered_map>
 #include <mutex>
+#include <functional>
 
 namespace remoteview {
+
+// Forward declarations
+class Server;
 
 // WebSocket connection session
 struct WebSocketSession {
@@ -27,6 +31,17 @@ class WebRtcServer {
 public:
     explicit WebRtcServer(std::shared_ptr<Config> config);
     ~WebRtcServer();
+    
+    // Set reference to main server for tile generation
+    void set_server(Server* server) { server_ = server; }
+    
+    // Callback type for tile generation  
+    using TileGenerationCallback = std::function<void(const std::string&, uint32_t, uint32_t, uint32_t)>;
+    
+    // Set callback for tile generation instead of direct server access
+    void set_tile_generation_callback(TileGenerationCallback callback) {
+        tile_generation_callback_ = callback;
+    }
     
     void start();
     void stop();
@@ -66,12 +81,29 @@ public:
     static int websocket_callback(struct lws* wsi, enum lws_callback_reasons reason,
                                 void* user, void* in, size_t len);
 
-private:
+    // Reference to main server for VDS access
+    Server* server_ = nullptr;
+    
+    // Callback for tile generation
+    TileGenerationCallback tile_generation_callback_;
     
     // Protocol handlers
     void handle_handshake(const std::string& session_id, const nlohmann::json& msg);
     void handle_ping(const std::string& session_id, const nlohmann::json& msg);
     void handle_tile_request(const std::string& session_id, const nlohmann::json& msg);
+    
+    // Client control message handlers
+    void handle_set_slice(const std::string& session_id, const nlohmann::json& msg);
+    void handle_set_view(const std::string& session_id, const nlohmann::json& msg);
+    void handle_set_lut(const std::string& session_id, const nlohmann::json& msg);
+    
+    // WebRTC signaling handlers
+    void handle_webrtc_offer(const std::string& session_id, const nlohmann::json& msg);
+    void handle_webrtc_answer(const std::string& session_id, const nlohmann::json& msg);
+    void handle_ice_candidate(const std::string& session_id, const nlohmann::json& msg);
+    
+    // Tile generation for seismic data
+    void generate_tiles_for_slice(const std::string& session_id, uint32_t inline_idx, uint32_t xline_idx, uint32_t z_idx);
     
     // Singleton instance for callback access
     static WebRtcServer* instance_;

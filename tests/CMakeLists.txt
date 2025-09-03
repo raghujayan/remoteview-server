@@ -37,6 +37,7 @@ target_link_libraries(remoteview_tests
 target_include_directories(remoteview_tests PRIVATE 
     ${CMAKE_SOURCE_DIR}/src
     ${GTEST_INCLUDE_DIRS}
+    ${OPENVDS_INCLUDE_DIR}
 )
 
 # Register tests
@@ -45,4 +46,7 @@ add_test(NAME RemoteViewTests COMMAND remoteview_tests)
 # Add compiler flags for tests
 target_compile_options(remoteview_tests PRIVATE
     -Wall -Wextra -Werror
+    -Wno-strict-aliasing    # Required for HueSpace SDK
+    -Wno-unused-parameter
+    -Wno-unused-variable
 )

@@ -76,6 +76,7 @@ add_subdirectory(src/rtc_channel)
 add_subdirectory(src/adaptivity)
 add_subdirectory(src/metrics)
 add_subdirectory(src/protocol)
+add_subdirectory(src/opengl_renderer)
 
 # Main executable
 add_executable(remoteview_server
@@ -92,6 +93,7 @@ target_link_libraries(remoteview_server PRIVATE
     remoteview_adaptivity
     remoteview_metrics
     remoteview_protocol
+    remoteview_opengl_renderer
     nlohmann_json::nlohmann_json
     spdlog::spdlog
     OpenSSL::SSL

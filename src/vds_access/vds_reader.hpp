@@ -96,6 +96,9 @@ public:
     
     const VdsMetadata& get_metadata() const { return metadata_; }
     
+    // Get the loaded VDS object for sharing with other components (e.g., OpenGL renderer)
+    Hue::ProxyLib::VDS* get_vds_object() const { return vds_file_; }
+    
     // Main tile reading function - follows HueSpace async pattern
     std::unique_ptr<TileData> read_tile(const TileRequest& request);
     
