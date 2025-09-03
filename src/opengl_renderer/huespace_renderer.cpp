@@ -851,58 +851,45 @@ void HueSpaceRenderer::render_huespace() {
         spdlog::info("Starting resampling from {}x{} to {}x{}", 
                     actual_width, actual_height, target_width, target_height);
         
-        // Now resample to target dimensions
+        // Sanity check before resampling
+        if (target_width <= 0 || target_height <= 0) {
+            spdlog::error("Invalid target dimensions: {}x{}", target_width, target_height);
+            return;
+        }
+        
+        if (actual_width <= 0 || actual_height <= 0) {
+            spdlog::error("Invalid actual dimensions: {}x{}", actual_width, actual_height);
+            return;
+        }
+        
+        // Now resample to target dimensions - using simpler nearest neighbor first to isolate issue
         for (int y = 0; y < target_height; ++y) {
             for (int x = 0; x < target_width; ++x) {
+                // Simple nearest neighbor sampling to test
+                int src_x = (x * actual_width) / target_width;
+                int src_y = (y * actual_height) / target_height;
+                
+                // Clamp to valid range
+                src_x = std::min(src_x, actual_width - 1);
+                src_y = std::min(src_y, actual_height - 1);
+                
+                int src_idx = src_y * actual_width + src_x;
+                int dst_idx = y * target_width + x;
+                
+                if (src_idx >= 0 && src_idx < vds_buffer.size() && 
+                    dst_idx >= 0 && dst_idx < slice_data.size()) {
+                    slice_data[dst_idx] = vds_buffer[src_idx];
+                }
+            }
+        }
+        
+        // Skip bilinear interpolation for now
+        /*
                 // Bilinear interpolation from VDS buffer to target
                 float src_x = (float)x * (actual_width - 1) / (target_width - 1);
                 float src_y = (float)y * (actual_height - 1) / (target_height - 1);
                 
-                int x0 = std::min((int)src_x, actual_width - 1);
-                int y0 = std::min((int)src_y, actual_height - 1);
-                int x1 = std::min(x0 + 1, actual_width - 1);
-                int y1 = std::min(y0 + 1, actual_height - 1);
-                
-                // Ensure indices are valid
-                x0 = std::max(0, x0);
-                y0 = std::max(0, y0);
-                x1 = std::max(0, x1);
-                y1 = std::max(0, y1);
-                
-                float fx = src_x - x0;
-                float fy = src_y - y0;
-                
-                // Compute buffer indices with bounds checking
-                int idx00 = y0 * actual_width + x0;
-                int idx10 = y0 * actual_width + x1;
-                int idx01 = y1 * actual_width + x0;
-                int idx11 = y1 * actual_width + x1;
-                
-                // Extra safety check
-                int max_idx = vds_buffer.size() - 1;
-                idx00 = std::min(idx00, max_idx);
-                idx10 = std::min(idx10, max_idx);
-                idx01 = std::min(idx01, max_idx);
-                idx11 = std::min(idx11, max_idx);
-                
-                float v00 = vds_buffer[idx00];
-                float v10 = vds_buffer[idx10];
-                float v01 = vds_buffer[idx01];
-                float v11 = vds_buffer[idx11];
-                
-                float v0 = v00 * (1.0f - fx) + v10 * fx;
-                float v1 = v01 * (1.0f - fx) + v11 * fx;
-                float value = v0 * (1.0f - fy) + v1 * fy;
-                
-                // Safety check for output buffer
-                int out_idx = y * target_width + x;
-                if (out_idx >= 0 && out_idx < slice_data.size()) {
-                    slice_data[out_idx] = value;
-                } else {
-                    spdlog::error("Output index out of bounds: {} (max: {})", out_idx, slice_data.size() - 1);
-                }
-            }
-        }
+        */
         
         // Find min/max for normalization
         float min_val = *std::min_element(slice_data.begin(), slice_data.end());
