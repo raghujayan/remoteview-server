@@ -840,25 +840,54 @@ void HueSpaceRenderer::render_huespace() {
             spdlog::info("Successfully read VDS data: {}x{} samples", actual_width, actual_height);
         }
         
+        // Safety check - ensure buffers are correctly sized
+        if (vds_buffer.size() != actual_width * actual_height) {
+            spdlog::error("VDS buffer size mismatch! Expected {}, got {}", 
+                         actual_width * actual_height, vds_buffer.size());
+            return;
+        }
+        
+        spdlog::info("Starting resampling from {}x{} to {}x{}", 
+                    actual_width, actual_height, target_width, target_height);
+        
         // Now resample to target dimensions
         for (int y = 0; y < target_height; ++y) {
             for (int x = 0; x < target_width; ++x) {
                 // Bilinear interpolation from VDS buffer to target
-                float src_x = (float)x * actual_width / target_width;
-                float src_y = (float)y * actual_height / target_height;
+                float src_x = (float)x * (actual_width - 1) / (target_width - 1);
+                float src_y = (float)y * (actual_height - 1) / (target_height - 1);
                 
-                int x0 = (int)src_x;
-                int y0 = (int)src_y;
+                int x0 = std::min((int)src_x, actual_width - 1);
+                int y0 = std::min((int)src_y, actual_height - 1);
                 int x1 = std::min(x0 + 1, actual_width - 1);
                 int y1 = std::min(y0 + 1, actual_height - 1);
+                
+                // Ensure indices are valid
+                x0 = std::max(0, x0);
+                y0 = std::max(0, y0);
+                x1 = std::max(0, x1);
+                y1 = std::max(0, y1);
                 
                 float fx = src_x - x0;
                 float fy = src_y - y0;
                 
-                float v00 = vds_buffer[y0 * actual_width + x0];
-                float v10 = vds_buffer[y0 * actual_width + x1];
-                float v01 = vds_buffer[y1 * actual_width + x0];
-                float v11 = vds_buffer[y1 * actual_width + x1];
+                // Compute buffer indices with bounds checking
+                int idx00 = y0 * actual_width + x0;
+                int idx10 = y0 * actual_width + x1;
+                int idx01 = y1 * actual_width + x0;
+                int idx11 = y1 * actual_width + x1;
+                
+                // Extra safety check
+                int max_idx = vds_buffer.size() - 1;
+                idx00 = std::min(idx00, max_idx);
+                idx10 = std::min(idx10, max_idx);
+                idx01 = std::min(idx01, max_idx);
+                idx11 = std::min(idx11, max_idx);
+                
+                float v00 = vds_buffer[idx00];
+                float v10 = vds_buffer[idx10];
+                float v01 = vds_buffer[idx01];
+                float v11 = vds_buffer[idx11];
                 
                 float v0 = v00 * (1.0f - fx) + v10 * fx;
                 float v1 = v01 * (1.0f - fx) + v11 * fx;
