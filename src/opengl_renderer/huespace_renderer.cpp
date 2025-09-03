@@ -695,40 +695,34 @@ void HueSpaceRenderer::render_huespace() {
         }
         
         // Read actual VDS data using HueSpace API
-        // First read at appropriate downsample level for performance
-        int downsample_level = 0;
+        // Use LOD 0 (full resolution) for now to match working example
+        const int lod = 0;  // Start with LOD 0 to ensure it works
         
-        // Calculate optimal downsample level based on size
-        while ((width >> downsample_level) > target_width * 2 && 
-               (height >> downsample_level) > target_height * 2 && 
-               downsample_level < 4) {
-            downsample_level++;
-        }
-        
-        // Calculate actual buffer size based on what we're requesting
-        // The buffer size depends on the slice type and downsample level
+        // Calculate actual buffer size based on voxel ranges (like the working example)
+        // Buffer size = product of (max - min) for each varying dimension
         int buffer_size = 0;
         int actual_width = 0;
         int actual_height = 0;
         
         if (slice_params_.show_inline) {
             // Inline slice: we read full crossline × time
-            actual_width = xline_count >> downsample_level;
-            actual_height = sample_count >> downsample_level;
+            actual_width = xline_count;   // Full resolution at LOD 0
+            actual_height = sample_count;  // Full resolution at LOD 0
         } else if (slice_params_.show_crossline) {
             // Crossline slice: we read full inline × time
-            actual_width = inline_count >> downsample_level;
-            actual_height = sample_count >> downsample_level;
+            actual_width = inline_count;   // Full resolution at LOD 0
+            actual_height = sample_count;  // Full resolution at LOD 0
         } else {
             // Time slice: we read full inline × crossline
-            actual_width = inline_count >> downsample_level;
-            actual_height = xline_count >> downsample_level;
+            actual_width = inline_count;   // Full resolution at LOD 0
+            actual_height = xline_count;   // Full resolution at LOD 0
         }
         
+        // Buffer size matches exactly what we're requesting
         buffer_size = actual_width * actual_height;
         
-        spdlog::info("Buffer allocation for downsample level {}: {}x{} = {} floats", 
-                     downsample_level, actual_width, actual_height, buffer_size);
+        spdlog::info("Buffer allocation for LOD {}: {}x{} = {} floats", 
+                     lod, actual_width, actual_height, buffer_size);
         
         // Recalculate target dimensions based on ACTUAL downsampled dimensions
         // to preserve aspect ratio correctly
@@ -810,17 +804,17 @@ void HueSpaceRenderer::render_huespace() {
                     startRead[0], startRead[1], startRead[2], startRead[3], startRead[4], startRead[5]);
         spdlog::info("  endRead: [{}, {}, {}, {}, {}, {}]",
                     endRead[0], endRead[1], endRead[2], endRead[3], endRead[4], endRead[5]);
-        spdlog::info("  downsample_level: {}, channel: 0", downsample_level);
+        spdlog::info("  LOD: {}, channel: 0, buffer_size: {} bytes", lod, vds_buffer.size() * sizeof(float));
         
-        // Use RequestVolumeSubset like the working sample (NOT RequestVolumeSamples)
+        // Use RequestVolumeSubset with explicit buffer size like the working example
         auto requestID = vda->RequestVolumeSubset(
             vds_buffer.data(),           // Output buffer
             layout,                      // VDS layout
             Hue::HueSpaceLib::DimensionGroup012,  // Standard dimension group
-            downsample_level,            // LOD level
+            lod,                         // LOD level (0 = full resolution)
             0,                          // Channel 0
             startRead,                  // Start coordinates
-            endRead,                    // End coordinates (exclusive - must be > start)
+            endRead,                    // End coordinates (exclusive)
             Hue::HueSpaceLib::DataBlock::Format_R32  // Float format
         );
         
@@ -862,26 +856,26 @@ void HueSpaceRenderer::render_huespace() {
             return;
         }
         
-        // Now resample to target dimensions - using simpler nearest neighbor first to isolate issue
-        for (int y = 0; y < target_height; ++y) {
-            for (int x = 0; x < target_width; ++x) {
-                // Simple nearest neighbor sampling to test
-                int src_x = (x * actual_width) / target_width;
-                int src_y = (y * actual_height) / target_height;
-                
-                // Clamp to valid range
-                src_x = std::min(src_x, actual_width - 1);
-                src_y = std::min(src_y, actual_height - 1);
-                
-                int src_idx = src_y * actual_width + src_x;
+        // For now, skip resampling entirely - just copy a portion of the data for testing
+        // This will help isolate if the crash is from resampling or earlier
+        spdlog::info("Skipping resampling for testing - copying subset of data");
+        
+        // Just copy what fits
+        int copy_width = std::min(target_width, actual_width);
+        int copy_height = std::min(target_height, actual_height);
+        
+        for (int y = 0; y < copy_height; ++y) {
+            for (int x = 0; x < copy_width; ++x) {
+                int src_idx = y * actual_width + x;
                 int dst_idx = y * target_width + x;
                 
-                if (src_idx >= 0 && src_idx < vds_buffer.size() && 
-                    dst_idx >= 0 && dst_idx < slice_data.size()) {
+                if (src_idx < vds_buffer.size() && dst_idx < slice_data.size()) {
                     slice_data[dst_idx] = vds_buffer[src_idx];
                 }
             }
         }
+        
+        spdlog::info("Copied {}x{} subset of data", copy_width, copy_height);
         
         // Skip bilinear interpolation for now
         /*
